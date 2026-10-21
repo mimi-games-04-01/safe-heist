@@ -62,6 +62,7 @@ button:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
 
 .btn{width:100%;height:54px;border-radius:6px;font-family:var(--display);font-size:22px;letter-spacing:.06em;text-transform:uppercase}
 .btn.primary{background:linear-gradient(90deg,var(--pink),var(--orange));color:#fff;box-shadow:0 4px 0 #8c1650;text-shadow:0 2px 0 rgba(0,0,0,.25)}
+.btn:disabled{opacity:.45;box-shadow:none}
 .btn.primary:active{transform:translateY(3px);box-shadow:0 1px 0 #8c1650}
 .btn.secondary{background:#1d1c24;border:1.5px solid #4a4857;color:var(--white);font-size:18px;height:48px}
 
@@ -183,7 +184,7 @@ button:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
   </div>
   <div class="panel-bottom">
     <h1 class="headline skew">SAFE HEIST</h1>
-    <p>Crack today’s 6-digit code and win a bonus.</p>
+    <p id="splashText">One safe. Six tries. Crack the 6-digit code and win a bonus.</p>
     <button class="btn primary" id="playBtn">Play</button>
     <button class="link" id="howBtn">How to play</button>
   </div>
@@ -222,7 +223,7 @@ button:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
       <div><span class="cell miss">5</span>Not in the code</div>
       <div><svg viewBox="0 0 24 24"><use href="#star"/></svg>Every wrong try adds a wanted star. Six stars and you’re busted.</div>
     </div>
-    <p>Crack the safe to win a bonus promo code. A new safe opens every day at midnight (<span id="tzLabel"></span>).</p>
+    <p>You get only one heist, so make every try count. Crack the safe to win a bonus promo code.</p>
     <div class="gap"></div>
     <button class="btn primary" id="rulesClose">Got it</button>
   </div>
@@ -238,11 +239,14 @@ button:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
 const CONFIG = {
   promoCode: 'HEIST100',                        // promo code shown to winners
   ctaText: 'Go to Need for Spin',               // text on the button under the code
-  promoNote: 'Enter this code on the website to activate your bonus. Minimum deposit: €15.', // small text at the bottom of the win screen
-  siteUrl: 'https://bit.ly/NFS_Game_Bonus_19', // where the button leads
-  salt: 'vicenights2026',              // any secret word, it defines the daily code
-  launchDate: '2026-11-19',                     // this day becomes "Safe #1"
-  tzOffsetHours: 3,                             // code changes at midnight in UTC+3
+  promoNote: 'Enter this code on the website to activate your bonus. Valid until November 22. Minimum deposit: €15.', // small text at the bottom of the win screen
+  siteUrl: 'https://YOUR-SITE.com/?utm_source=telegram&utm_medium=miniapp&utm_campaign=safe_heist', // where the button leads
+  channelUrl: 'https://t.me/YOUR_CHANNEL',      // "Back to the channel" button after a loss or when the heist is over
+  startDate: '',                                // first day the game is open, e.g. '2026-11-19'. Empty = open right away
+  endDate: '',                                  // last day the game is open, e.g. '2026-11-22'. Empty = never closes
+  tzOffsetHours: 3,                             // days start and end at midnight in UTC+3
+  campaignId: 'gta6',                           // change for a future campaign so everyone can play again
+  salt: 'change-this-secret-word',              // any secret word, it shapes every player's code
   length: 6,
   attempts: 6
 };
@@ -256,11 +260,12 @@ function haptic(t) {
     if (t === 'success' || t === 'error' || t === 'warning') tg.HapticFeedback.notificationOccurred(t);
     else tg.HapticFeedback.impactOccurred(t || 'light'); } catch (e) {}
 }
+function openChannel() { if (inTG) tg.openTelegramLink(CONFIG.channelUrl); else window.open(CONFIG.channelUrl, '_blank'); }
 
 /* ===== Analytics (GTM dataLayer) ===== */
-function track(event, params) { window.dataLayer = window.dataLayer || []; window.dataLayer.push(Object.assign({ event: event }, params || {})); }
+function track(event, params) { window.dataLayer = window.dataLayer || []; window.dataLayer.push(Object.assign({ event: event, campaign: CONFIG.campaignId }, params || {})); }
 
-/* ===== Test mode: add ?test to the link ===== */
+/* ===== Test mode: add ?test to the link (random code, nothing saved, dates ignored) ===== */
 const TEST = new URLSearchParams(location.search).has('test');
 
 /* ===== Storage ===== */
@@ -273,10 +278,13 @@ const store = {
     try { localStorage.setItem(k, v); } catch (e) { mem[k] = v; } return Promise.resolve(); }
 };
 
-/* ===== Daily code ===== */
-function dayKey() { return new Date(Date.now() + CONFIG.tzOffsetHours * 3600e3).toISOString().slice(0, 10); }
-function dayNumber(k) { return Math.floor((Date.parse(k) - Date.parse(CONFIG.launchDate)) / 864e5) + 1; }
-function msToNext() { const s = Date.now() + CONFIG.tzOffsetHours * 3600e3; return 864e5 - (s % 864e5); }
+/* ===== Campaign window ===== */
+function todayKey() { return new Date(Date.now() + CONFIG.tzOffsetHours * 3600e3).toISOString().slice(0, 10); }
+function niceDate(k) { return new Date(k + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' }); }
+const today = todayKey();
+const phase = TEST ? 'open' : (CONFIG.startDate && today < CONFIG.startDate ? 'soon' : (CONFIG.endDate && today > CONFIG.endDate ? 'over' : 'open'));
+
+/* ===== Each player gets their own code, so answers can't be shared ===== */
 function seedFrom(str) { let h = 1779033703 ^ str.length;
   for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
   h = Math.imul(h ^ (h >>> 16), 2246822507); h = Math.imul(h ^ (h >>> 13), 3266489909); return (h ^= h >>> 16) >>> 0; }
@@ -286,14 +294,18 @@ function codeFor(s) { const r = rng(seedFrom(s)); const d = [0,1,2,3,4,5,6,7,8,9
   for (let i = 9; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [d[i], d[j]] = [d[j], d[i]]; } return d.slice(0, CONFIG.length).join(''); }
 
 /* ===== State ===== */
-const today = dayKey(), num = dayNumber(today);
-const code = TEST ? codeFor(String(Math.random())) : codeFor(CONFIG.salt + ':' + today);
-const saveKey = 'nfs_heist_' + today;
-let state = { date: today, guesses: [], status: 'playing', claimed: false };
+const saveKey = 'nfs_heist_' + CONFIG.campaignId;
+let code = '';
+let state = { guesses: [], status: 'playing', claimed: false };
 let current = '', busy = false;
-const label = TEST ? 'TEST SAFE' : (num >= 1 ? 'SAFE #' + num : 'PRACTICE SAFE');
 const $ = id => document.getElementById(id);
 
+async function playerId() {
+  if (inTG && tg.initDataUnsafe && tg.initDataUnsafe.user) return 'tg' + tg.initDataUnsafe.user.id;
+  let id = await store.get('nfs_heist_pid');
+  if (!id) { id = 'web' + Math.random().toString(36).slice(2); await store.set('nfs_heist_pid', id); }
+  return id;
+}
 function evaluate(g) { return g.split('').map((ch, i) => ch === code[i] ? 'hit' : (code.includes(ch) ? 'near' : 'miss')); }
 function save() { if (!TEST) store.set(saveKey, JSON.stringify(state)); }
 function wrongCount() { return state.guesses.filter(g => g !== code).length; }
@@ -334,7 +346,7 @@ function paintKeys() {
     b.classList.remove('hit','near','miss'); if (best[k]) b.classList.add(best[k]); });
 }
 function paintStatus(animateNew) {
-  $('safeLabel').textContent = label;
+  $('safeLabel').textContent = TEST ? 'TEST SAFE' : 'SAFE HEIST';
   const w = wrongCount();
   let html = '';
   for (let i = 0; i < CONFIG.attempts; i++) html += '<svg viewBox="0 0 24 24" class="' + (i < w ? 'on' : '') + (animateNew && i === w - 1 ? ' new' : '') + '"><use href="#star"/></svg>';
@@ -364,14 +376,14 @@ function submit() {
   const g = current, r = state.guesses.length;
   state.guesses.push(g); current = '';
   paintRow(r, g, true); haptic('medium');
-  track('heist_attempt', { safe_day: num, attempt: r + 1 });
+  track('heist_attempt', { attempt: r + 1 });
   if (g === code) state.status = 'won'; else if (state.guesses.length >= CONFIG.attempts) state.status = 'lost';
   save();
   setTimeout(() => {
     paintKeys(); paintStatus(g !== code); busy = false;
     if (state.status !== 'playing') {
       haptic(state.status === 'won' ? 'success' : 'error');
-      track(state.status === 'won' ? 'heist_win' : 'heist_lose', { safe_day: num, attempts_used: state.guesses.length });
+      track(state.status === 'won' ? 'heist_win' : 'heist_lose', { attempts_used: state.guesses.length });
       setTimeout(showResult, 600);
     }
   }, CONFIG.length * 170 + 260);
@@ -382,7 +394,6 @@ document.addEventListener('keydown', e => {
 });
 
 /* ===== Result & promo code ===== */
-let timerInt;
 function showResult() {
   const won = state.status === 'won', n = state.guesses.length;
   const ov = $('result');
@@ -406,27 +417,28 @@ function showResult() {
     h = '<div class="banner busted">BUSTED</div>' +
         '<div class="sheet">' +
         '<h3>The alarm went off</h3>' +
-        '<p>Six wanted stars. Today’s code was:</p>' +
+        '<p>Six wanted stars. Your safe code was:</p>' +
         '<div class="answer">' + code.split('').map(d => '<span class="cell hit">' + d + '</span>').join('') + '</div>' +
-        '<p>Lie low and come back for the next safe.</p>';
+        '<p>This heist is over for you. Stay tuned to our channel for the next one.</p>' +
+        '<div class="gap"></div>' +
+        '<button class="btn secondary" id="channelBtn">Back to the channel</button>';
   }
-  h += '<div class="timer">Next safe opens in <b id="countdown">--:--:--</b></div><button class="close" id="closeBtn">Close</button></div>';
+  h += '<button class="close" id="closeBtn">Close</button></div>';
   ov.innerHTML = h;
   ov.classList.toggle('busted', !won && !ov.dataset.seen);
   ov.dataset.seen = '1';
   ov.classList.add('show');
-  $('closeBtn').onclick = () => { ov.classList.remove('show'); clearInterval(timerInt); };
+  $('closeBtn').onclick = () => ov.classList.remove('show');
   if (won) {
     $('claimBtn').onclick = () => {
-      state.claimed = true; save(); haptic('success'); track('promo_claim', { safe_day: num });
+      state.claimed = true; save(); haptic('success'); track('promo_claim');
       $('claimBtn').hidden = true; $('promo').hidden = false;
     };
-    $('copyBtn').onclick = () => { copy(CONFIG.promoCode); track('promo_copy', { safe_day: num }); };
-    $('siteBtn').onclick = () => { track('site_click', { safe_day: num }); if (inTG) tg.openLink(CONFIG.siteUrl); else window.open(CONFIG.siteUrl, '_blank'); };
+    $('copyBtn').onclick = () => { copy(CONFIG.promoCode); track('promo_copy'); };
+    $('siteBtn').onclick = () => { track('site_click'); if (inTG) tg.openLink(CONFIG.siteUrl); else window.open(CONFIG.siteUrl, '_blank'); };
+  } else {
+    $('channelBtn').onclick = () => { track('channel_click'); openChannel(); };
   }
-  const tick = () => { const ms = msToNext(), hh = Math.floor(ms / 36e5), mm = Math.floor(ms % 36e5 / 6e4), ss = Math.floor(ms % 6e4 / 1e3);
-    const el = $('countdown'); if (el) el.textContent = [hh, mm, ss].map(x => String(x).padStart(2, '0')).join(':'); if (ms < 1000) location.reload(); };
-  tick(); clearInterval(timerInt); timerInt = setInterval(tick, 1000);
 }
 function copy(text) {
   const done = () => { toast('Code copied'); haptic('light'); };
@@ -436,25 +448,37 @@ function copy(text) {
 }
 
 /* ===== Screens & rules ===== */
-$('tzLabel').textContent = 'UTC' + (CONFIG.tzOffsetHours >= 0 ? '+' : '') + CONFIG.tzOffsetHours;
 function openRules() { $('rules').classList.add('show'); }
 $('howBtn').onclick = openRules; $('helpBtn').onclick = openRules;
 $('rulesClose').onclick = () => { $('rules').classList.remove('show'); store.set('nfs_heist_rules_seen', '1'); };
-$('playBtn').onclick = async () => {
-  $('splash').hidden = true; $('game').hidden = false; track('heist_play', { safe_day: num });
+function startGame() {
+  $('splash').hidden = true; $('game').hidden = false; track('heist_play');
   if (state.status !== 'playing') setTimeout(showResult, 250);
-  else if (!(await store.get('nfs_heist_rules_seen'))) openRules();
-};
+  else store.get('nfs_heist_rules_seen').then(v => { if (!v) openRules(); });
+}
 
 /* ===== Start ===== */
 (async function init() {
+  const play = $('playBtn');
+  if (phase === 'soon') {
+    $('splashText').textContent = 'The heist starts on ' + niceDate(CONFIG.startDate) + '. Get ready.';
+    play.textContent = 'Starts ' + niceDate(CONFIG.startDate); play.disabled = true;
+    track('heist_open', { phase: phase }); return;
+  }
+  if (phase === 'over') {
+    $('splashText').textContent = 'This heist is over. Stay tuned to our channel for the next one.';
+    play.textContent = 'Back to the channel'; play.onclick = openChannel; $('howBtn').hidden = true;
+    track('heist_open', { phase: phase }); return;
+  }
+  code = TEST ? codeFor(String(Math.random())) : codeFor(CONFIG.salt + ':' + CONFIG.campaignId + ':' + await playerId());
   buildBoard(); buildKeypad();
-  if (!TEST) { try { const s = JSON.parse(await store.get(saveKey) || 'null'); if (s && s.date === today) state = Object.assign(state, s); } catch (e) {} }
+  if (!TEST) { try { const s = JSON.parse(await store.get(saveKey) || 'null'); if (s && s.guesses) state = Object.assign(state, s); } catch (e) {} }
   if (state.status !== 'playing') $('result').dataset.seen = '1';
   state.guesses.forEach((g, i) => paintRow(i, g, false));
   paintKeys(); paintStatus(false); drawCurrent();
-  $('playBtn').textContent = state.status !== 'playing' ? 'See result' : (state.guesses.length ? 'Continue' : 'Play');
-  track('heist_open', { safe_day: num, in_telegram: inTG });
+  play.textContent = state.status !== 'playing' ? 'See result' : (state.guesses.length ? 'Continue' : 'Play');
+  play.onclick = startGame;
+  track('heist_open', { phase: phase, in_telegram: inTG });
 })();
 </script>
 </body>
